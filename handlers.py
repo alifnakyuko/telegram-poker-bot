@@ -27,7 +27,7 @@ async def send_hole_cards(context: CallbackContext, player_id: str, player_name:
     try:
         await context.bot.send_message(
             chat_id=player_id,
-            text=f"🎴 Kartu Anda di grup:\n\n{cards_str}",
+            text=f"🎴 Kartu Anda:\n\n{cards_str}",
             parse_mode='Markdown'
         )
     except Exception as e:
@@ -37,19 +37,25 @@ async def send_game_status(context: CallbackContext, group_id: int, game: GameMa
     """Send game status to group"""
     state = game.get_game_state()
     
+    community_text = ""
+    if state['community_cards']:
+        community_text = " ".join([str(c) for c in state['community_cards']])
+    else:
+        community_text = "Belum ada"
+    
     status_text = f"""
 🎮 **POKER GAME STATUS**
 
 💰 **POT:** {state['pot']} chips
 📊 **Current Bet:** {state['current_bet']} chips
-🎯 **Phase:** {state['phase']}
+🎯 **Phase:** {state['phase'].upper()}
 👥 **Active Players:** {state['active_players']}
-😔 **Folded:** {state['folded_count']} | 💥 **All-in:** {state['all_in_count']}
+😔 **Folded:** {len(game.folded_players)} | 💥 **All-in:** {len(game.all_in_players)}
 
 🃏 **Community Cards:**
-{' '.join(state['community_cards']) if state['community_cards'] else 'Not yet'}
+{community_text}
 
-{'⏳ Waiting for: ' + state['current_player'] if state['current_player'] else 'Showdown!'}
+{'⏳ Waiting for: ' + (game.get_current_player()['name'] if game.get_current_player() else 'Unknown') if game.get_current_player() else 'Showdown!'}
 """
     
     try:
@@ -84,12 +90,15 @@ async def send_player_action_menu(context: CallbackContext, player_id: str, grou
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
+    need_to_call = game.current_bet - game.player_bets[int(player_id)]
+    
     action_text = f"""
 🎯 **Giliran Anda!**
 
+🎴 Kartu Anda: Lihat di DM
 💰 Your Chips: {player['chips']}
 📊 Current Bet: {game.current_bet}
-💵 Need to Call: {game.current_bet - game.player_bets[int(player_id)]}
+💵 Need to Call: {need_to_call}
 """
     
     try:
@@ -111,9 +120,16 @@ async def handle_check(context: CallbackContext, player_id: int, group_id: int):
     success, message = game.check(player_id)
     
     if success:
+        # Find player name
+        player_name = "Player"
+        for p in game.players:
+            if p['id'] == player_id:
+                player_name = p['name']
+                break
+        
         await context.bot.send_message(
             chat_id=group_id,
-            text=f"✓ {game.get_player_hole_cards(player_id) and 'Someone' or 'Player'} checked"
+            text=f"✓ {player_name} checked"
         )
     else:
         await context.bot.send_message(chat_id=player_id, text=f"❌ {message}")
@@ -237,9 +253,27 @@ async def progress_game(context: CallbackContext, group_id: int):
             
             # Send showdown results
             if winner:
+                # Show final community cards
+                community_text = " ".join([str(c) for c in game.community_cards])
+                
+                # Get winner's hand info
+                hand_name = game.get_hand_name(winner['id'])
+                
+                showdown_text = f"""
+🏆 **SHOWDOWN!**
+
+🃏 **Community Cards:**
+{community_text}
+
+🥇 **{winner['name']} wins!**
+🎯 **Hand:** {hand_name}
+💰 **Pot:** {game.pot} chips
+"""
+                
                 await context.bot.send_message(
                     chat_id=group_id,
-                    text=f"🏆 **SHOWDOWN!**\n\n🥇 **{winner['name']} wins!**\n💰 **{game.pot} chips**"
+                    text=showdown_text,
+                    parse_mode='Markdown'
                 )
                 game.end_game()
                 del active_games[group_id]
